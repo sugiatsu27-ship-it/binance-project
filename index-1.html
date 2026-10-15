@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>賭け判定 自動</title>
+<style>
+*{box-sizing:border-box}
+
+/* Layout: one narrow column, verdict card on top, inputs below, details last. */
+:root{
+  --bg:#f3f5f7; --card:#ffffff; --fg:#14202b; --mute:#5d6b78; --line:#d9e0e6;
+  --up:#0b8f5b; --up-bg:#dff5ea; --down:#c93a3a; --down-bg:#fbe3e3;
+  --skip:#6b7683; --skip-bg:#e8ecf0; --accent:#1f4fd8; --warn:#9a6700; --warn-bg:#fff3cd;
+  --font:"Noto Sans JP","Hiragino Sans","Yu Gothic",system-ui,sans-serif;
+  --num:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0f161d; --card:#18222c; --fg:#e8eef3; --mute:#97a5b2; --line:#2a3743;
+  --up:#3ccf8e; --up-bg:#12382a; --down:#ff7a7a; --down-bg:#3d1c1f;
+  --skip:#a3afbb; --skip-bg:#222d38; --accent:#7aa2ff; --warn:#f0c04a; --warn-bg:#3a2f10; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0f161d; --card:#18222c; --fg:#e8eef3; --mute:#97a5b2; --line:#2a3743;
+  --up:#3ccf8e; --up-bg:#12382a; --down:#ff7a7a; --down-bg:#3d1c1f;
+  --skip:#a3afbb; --skip-bg:#222d38; --accent:#7aa2ff; --warn:#f0c04a; --warn-bg:#3a2f10; color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--font);font-size:16px;line-height:1.5;
+  padding-block:16px 40px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+main{max-width:480px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
+h1{font-size:18px;margin:0;font-weight:700}
+.top{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap}
+.clock{font-family:var(--num);font-size:13px;color:var(--mute)}
+.verdict{border-radius:14px;padding:18px 16px;display:flex;flex-direction:column;gap:6px;background:var(--skip-bg);color:var(--skip)}
+.verdict.up{background:var(--up-bg);color:var(--up)}
+.verdict.down{background:var(--down-bg);color:var(--down)}
+.verdict .big{font-size:34px;font-weight:800;line-height:1.15}
+.verdict .sub{font-size:15px;color:var(--fg)}
+.verdict .stake{font-size:15px;font-weight:700;color:var(--fg)}
+.note{background:var(--warn-bg);color:var(--warn);border-radius:10px;padding:10px 12px;font-size:14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:12px}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+label{font-size:13px;color:var(--mute);display:block;margin-bottom:4px}
+input[type=number],input[type=text]{width:100%;box-sizing:border-box;font-size:20px;font-family:var(--num);padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--fg);min-width:0}
+input:focus,button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.seg{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.seg button{font:inherit;font-size:18px;font-weight:700;padding:12px;border-radius:10px;border:2px solid var(--line);background:var(--bg);color:var(--mute)}
+.seg button.on.g{border-color:var(--up);background:var(--up-bg);color:var(--up)}
+.seg button.on.r{border-color:var(--down);background:var(--down-bg);color:var(--down)}
+.link{font:inherit;font-size:13px;background:none;border:none;color:var(--accent);padding:4px 0;text-align:left}
+table{width:100%;border-collapse:collapse;font-size:15px;font-variant-numeric:tabular-nums}
+th,td{padding:7px 6px;text-align:right;border-bottom:1px solid var(--line)}
+th:first-child,td:first-child{text-align:left}
+th{font-size:12px;color:var(--mute);font-weight:600}
+.up-t{color:var(--up);font-weight:700}.down-t{color:var(--down);font-weight:700}
+.small{font-size:12.5px;color:var(--mute)}
+.chips{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.chips button{font:inherit;font-size:17px;font-family:var(--num);padding:12px 0;border-radius:10px;border:2px solid var(--line);background:var(--bg);color:var(--fg)}
+.chips button.on{border-color:var(--accent);background:var(--card);color:var(--accent);font-weight:800}
+summary{font-size:14px;color:var(--accent)}
+.vh{position:absolute;width:1px;height:1px;opacity:0;overflow:hidden}
+.shotbtn{display:block;text-align:center;font-size:20px;font-weight:800;padding:18px 12px;border-radius:12px;background:var(--accent);color:var(--card);margin:0}
+.vh:focus-visible+.shotbtn,.shotbtn:hover{outline:2px solid var(--fg);outline-offset:2px}
+.hint{font-size:13px;color:var(--mute)}
+
+.stats{display:grid;grid-template-columns:1fr 1fr;gap:8px 12px}
+.stats div{display:flex;flex-direction:column}
+.stats b{font-family:var(--num);font-size:17px;font-weight:600}
+.stats span{font-size:12px;color:var(--mute)}
+.bar{height:8px;border-radius:4px;background:var(--line);overflow:hidden}
+.bar i{display:block;height:100%;background:var(--accent);width:0}
+.err{background:var(--down-bg);color:var(--down);border-radius:10px;padding:10px 12px;font-size:14px}
+
+body{margin:0}
+</style></head><body>
+<main>
+  <div class="top"><h1>賭け判定（自動）</h1><div class="clock" id="clock">--:--:--</div></div>
+  <section class="verdict" id="verdict" aria-live="polite">
+    <div class="big" id="vbig">読み込み中…</div>
+    <div class="sub" id="vsub"></div>
+  </section>
+  <div class="err" id="err" hidden></div>
+  <div class="note" id="note" hidden></div>
+  <section class="card">
+    <div class="bar" aria-hidden="true"><i id="prog"></i></div>
+    <div class="stats">
+      <div><span>開始から</span><b id="sEl">-</b></div>
+      <div><span>差（決めた時点）</span><b id="sDiff">-</b></div>
+      <div><span>基準（Binance）</span><b id="sBase">-</b></div>
+      <div><span>いま（Binance・10秒前）</span><b id="sNow">-</b></div>
+      <div><span>UPの確率</span><b id="sPu">-</b></div>
+      <div><span>DOWNの確率</span><b id="sPd">-</b></div>
+    </div>
+  </section>
+  <section class="card">
+    <div><label>決め方</label>
+      <div class="seg"><button type="button" id="mAuto" class="on g">自動（いい時に知らせる）</button><button type="button" id="mFix" class="g">40秒で固定</button></div></div>
+    <div id="thBox"><label>きびしさ（高いほど回数が減って、当たりやすい）</label>
+      <div class="chips" style="grid-template-columns:repeat(3,1fr)"><button type="button" id="t65">ゆるめ</button><button type="button" id="t70" class="on">ふつう</button><button type="button" id="t80">きびしめ</button></div></div>
+  </section>
+  <section class="card">
+    <div class="row">
+      <div><label for="up">UPの％（入れると見送りも判定）</label>
+        <input id="up" type="number" inputmode="decimal" placeholder="例 53"></div>
+      <div><label for="bal">持ちコイン</label>
+        <input id="bal" type="number" inputmode="numeric" placeholder="例 80"></div>
+    </div>
+    <div class="hint">％を入れなければ、UPかDOWNの有利なほうを出します。入れると、割に合わないときは「見送り」になります。</div>
+  </section>
+  <section class="card small">
+    ・価格はBinanceのBTCUSDTです。みらいまの画面とは、数ドルずれることがあります。<br>
+    ・差が$10未満のときは自信が低いです。<br>
+    ・当たる保証はありません。1回は約1,000コインまで。
+  </section>
+</main>
+<script>
+/*MODEL_START*/
+var CFG={gamma:0.6,alpha:0.55,lag:10,fee:0.92,
+ sigma:{"0_0":3.5905,"0_1":1.8084,"1_0":3.2403,"1_1":2.133,"2_0":3.0603,"2_1":2.0989,"3_0":3.1134,"3_1":1.5708,"4_0":3.0864,"4_1":1.7962,"5_0":2.4836,"5_1":1.5765,"6_0":2.8649,"6_1":2.8446,"7_0":3.5067,"7_1":2.1077,"8_0":4.3476,"8_1":2.458,"9_0":3.223,"9_1":2.654}};
+function erf(x){var s=x<0?-1:1;x=Math.abs(x);var t=1/(1+0.3275911*x);
+ var y=1-(((((1.061405429*t-1.453152027)*t)+1.421413741)*t-0.284496736)*t+0.254829592)*t*Math.exp(-x*x);return s*y;}
+function Phi(z){return 0.5*(1+erf(z/Math.SQRT2));}
+function bandOf(h){return h>=6&&h<8?0:h>=8&&h<9?1:h>=9&&h<11?2:h>=11&&h<13?3:h>=13&&h<15?4:h>=15&&h<17?5:h>=17&&h<20?6:h>=20&&h<22.5?7:(h>=22.5||h<1)?8:9;}
+function probUp(v,s,band,wk){
+ var sig=CFG.sigma[band+"_"+wk],r=310-s; if(r<5)r=5;
+ var u=v/(sig*Math.pow(r,CFG.alpha));
+ var z=(u<0?-1:1)*Math.pow(Math.abs(u),CFG.gamma);
+ var p=Phi(z); return Math.min(1-1e-9,Math.max(1e-9,p));}
+function margin(absd){return absd<10?1.10:1.05;}
+function kelly(P,pct,bal){
+ var m=CFG.fee/pct; var f=(P*m-1)/(m-1); if(!(f>0))return 0;
+ var st=Math.min(0.25*f*bal,0.10*bal,1000); return Math.max(0,Math.floor(st));}
+/*MODEL_END*/
+(function(){
+ var $=function(i){return document.getElementById(i)};
+ var API="https://api.binance.com";
+ var cfg={mode:"auto",th:0.70}; try{var sv=JSON.parse(localStorage.getItem("bet_cfg")||"null"); if(sv&&(sv.mode==="auto"||sv.mode==="fixed")&&isFinite(sv.th))cfg=sv;}catch(e){}
+ var lock={rs:0}, skew=0, rows=[], roundStart=0, base=null, host=API, failing=0;
+ function pad(n){return (n<10?"0":"")+n}
+ function num(id){var v=parseFloat($(id).value);return isFinite(v)?v:null}
+ function now(){return Date.now()+skew}
+ async function jget(path){
+  var r=await fetch(host+path,{cache:"no-store"});
+  if(!r.ok)throw new Error("http "+r.status);
+  return r.json();
+ }
+ async function sync(){
+  try{var t=await jget("/api/v3/time");skew=t.serverTime-Date.now();}
+  catch(e){}
+ }
+ async function pull(){
+  var rs=Math.floor(now()/300000)*300000;
+  try{
+   var k=await jget("/api/v3/klines?symbol=BTCUSDT&interval=1s&startTime="+rs+"&limit=300");
+   if(!Array.isArray(k))throw new Error("bad");
+   roundStart=rs; rows=k; failing=0; $("err").hidden=true;
+  }catch(e){
+   failing++;
+   if(failing>=3){$("err").hidden=false;$("err").textContent="Binanceに接続できません。通信を確認してください。"}
+  }
+ }
+ function render(){
+  var t=now(), d=new Date(t+9*3600*1000), rs=Math.floor(t/300000)*300000;
+  $("clock").textContent=pad(d.getUTCHours())+":"+pad(d.getUTCMinutes())+":"+pad(d.getUTCSeconds());
+  var s=Math.floor((t-rs)/1000);
+  $("prog").style.width=(100*Math.min(300,s)/300)+"%";
+  $("sEl").textContent=s+"秒";
+  var hr=new Date(rs+9*3600*1000), h=hr.getUTCHours()+hr.getUTCMinutes()/60, dow=hr.getUTCDay();
+  var wk=(dow===0||dow===6)?1:0, band=bandOf(h);
+  var vb=$("verdict"),big=$("vbig"),sub=$("vsub"),note=$("note");
+  vb.className="verdict"; note.hidden=true;
+  if(roundStart!==rs||!rows.length){big.textContent="読み込み中…";sub.textContent="";return;}
+  var base=parseFloat(rows[0][1]); $("sBase").textContent=base.toFixed(2);
+  var idx=s-CFG.lag-1;
+  var LOCK1=40, LOCK2=90, AMIN=25, AMAX=120;
+  if(lock.rs!==rs) lock={rs:rs,stage:0,cnt:0,lastS:-1};
+  if(s>290){big.textContent="次の回へ";sub.textContent="残り10秒以内は使えません。";return;}
+  if(idx<0||idx>=rows.length){big.textContent="読み込み中…";sub.textContent="";return;}
+  var px=parseFloat(rows[idx][4]), vNow=px-base;
+  $("sNow").textContent=px.toFixed(2);
+  var Pn=probUp(vNow,s,band,wk), PLn=Math.max(Pn,1-Pn);
+  if(cfg.mode==="fixed"){
+   if(s<LOCK1){
+    big.textContent="待つ"; sub.textContent="あと"+(LOCK1-s)+"秒（開始"+LOCK1+"秒）で決めます。";
+    $("sDiff").textContent="-"; $("sPu").textContent="-"; $("sPd").textContent="-"; return;
+   }
+   if(lock.stage===0) lock={rs:rs,stage:1,P:Pn,v:vNow,s:s};
+   else if(lock.stage===1&&s>=LOCK2&&Math.max(lock.P,1-lock.P)<0.65) lock={rs:rs,stage:2,P:Pn,v:vNow,s:s};
+  } else {
+   if(lock.stage===0){
+    if(s<AMIN){
+     big.textContent="待つ"; sub.textContent="開始"+AMIN+"秒から様子を見ます（あと"+(AMIN-s)+"秒）。";
+     $("sDiff").textContent="-"; $("sPu").textContent="-"; $("sPd").textContent="-"; return;
+    }
+    if(s!==lock.lastS){lock.lastS=s; lock.cnt=(PLn>=cfg.th)?lock.cnt+1:0;}
+    if(lock.cnt>=2) lock={rs:rs,stage:1,P:Pn,v:vNow,s:s};
+    else if(s>=AMAX){ lock={rs:rs,stage:3}; }
+    else {
+     big.textContent="様子見"; sub.textContent="自信が"+Math.round(cfg.th*100)+"%を超えたら知らせます。（開始"+AMAX+"秒まで）";
+     $("sDiff").textContent=(vNow>=0?"+":"-")+"$"+Math.abs(vNow).toFixed(2); $("sPu").textContent=Math.round(Pn*100)+"%"; $("sPd").textContent=Math.round((1-Pn)*100)+"%"; return;
+    }
+   }
+   if(lock.stage===3){big.textContent="見送り";sub.textContent="開始"+AMAX+"秒まで自信が足りませんでした。次の回へ。";return;}
+  }
+  var P=lock.P, v=lock.v, Pd=1-P, lead=P>=0.5?"up":"down", PL=Math.max(P,Pd);
+  $("sDiff").textContent=(v>=0?"+":"-")+"$"+Math.abs(v).toFixed(2);
+  $("sPu").textContent=Math.round(P*100)+"%"; $("sPd").textContent=Math.round(Pd*100)+"%";
+  var info=(cfg.mode==="auto"?"いま！ ":"決定：")+"開始"+lock.s+"秒";
+  var wait=(cfg.mode==="fixed"&&lock.stage===1&&PL<0.65&&s<LOCK2)?" ／ 弱いので開始"+LOCK2+"秒（あと"+(LOCK2-s)+"秒）でもう一度決めます":"";
+  var upv=num("up"), has=upv!==null&&upv>0&&upv<100;
+  var mg=margin(Math.abs(v));
+  if(has){
+   var pu=upv/100, pdn=1-pu, evU=P*CFG.fee/pu-1, evD=Pd*CFG.fee/pdn-1, pick=null;
+   if(evU>=mg-1&&evU>=evD)pick="up"; else if(evD>=mg-1)pick="down";
+   if(!pick){big.textContent="見送り";sub.textContent=info+" ／ 期待値 UP "+(evU*100).toFixed(0)+"% / DOWN "+(evD*100).toFixed(0)+"%"+wait;return;}
+   var Pp=pick==="up"?P:Pd, pp=pick==="up"?pu:pdn;
+   big.textContent=pick==="up"?"UP":"DOWN"; vb.className="verdict "+pick;
+   var txt=info+" ／ 当たる確率 "+Math.round(Pp*100)+"% ／ 倍率 ×"+(CFG.fee/pp).toFixed(2);
+   var bal=num("bal"); if(bal>0){var st=kelly(Pp,pp,bal); txt+=" ／ 目安 "+(st>0?st+"コイン":"最小")}
+   sub.textContent=txt+wait;
+   if((pick==="up")!==(v>=0)){note.hidden=false;note.textContent="逆張りです。額は小さく。"}
+   return;
+  }
+  big.textContent=lead==="up"?"UP":"DOWN"; vb.className="verdict "+lead;
+  sub.textContent=info+" ／ "+(PL>=0.80?"強い":PL>=0.65?"ふつう":"弱い")+"（当たる確率 "+Math.round(PL*100)+"%）"+wait;
+  if(Math.abs(v)<10){note.hidden=false;note.textContent="差が$10未満です。見積もりが高めに出やすいので、少なめに。"}
+ }
+
+ function paint(){
+  $("mAuto").className=cfg.mode==="auto"?"on g":"g"; $("mFix").className=cfg.mode==="fixed"?"on g":"g";
+  $("thBox").hidden=cfg.mode!=="auto";
+  $("t65").className=cfg.th===0.65?"on":""; $("t70").className=cfg.th===0.70?"on":""; $("t80").className=cfg.th===0.80?"on":"";
+ }
+ function save(){try{localStorage.setItem("bet_cfg",JSON.stringify(cfg))}catch(e){} lock={rs:0}; paint(); render();}
+ $("mAuto").addEventListener("click",function(){cfg.mode="auto";save()});
+ $("mFix").addEventListener("click",function(){cfg.mode="fixed";save()});
+ $("t65").addEventListener("click",function(){cfg.th=0.65;save()});
+ $("t70").addEventListener("click",function(){cfg.th=0.70;save()});
+ $("t80").addEventListener("click",function(){cfg.th=0.80;save()});
+ paint();
+ sync().then(pull).then(render);
+ setInterval(pull,1500); setInterval(render,500); setInterval(sync,60000);
+})();
+</script></body></html>
