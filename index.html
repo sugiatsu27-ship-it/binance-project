@@ -83,7 +83,7 @@ body{margin:0}
       <div><span>開始から</span><b id="sEl">-</b></div>
       <div><span>差（決めた時点）</span><b id="sDiff">-</b></div>
       <div><span>基準（Binance）</span><b id="sBase">-</b></div>
-      <div><span>いま（Binance・10秒前）</span><b id="sNow">-</b></div>
+      <div><span>いま（Binance）</span><b id="sNow">-</b></div>
       <div><span>UPの確率</span><b id="sPu">-</b></div>
       <div><span>DOWNの確率</span><b id="sPd">-</b></div>
     </div>
@@ -108,24 +108,31 @@ body{margin:0}
     <div class="hint">％を入れなければ、UPかDOWNの有利なほうを出します。入れると、割に合わないときは「見送り」になります。</div>
   </section>
   <section class="card small">
-    ・価格はBinanceのBTCUSDTです。みらいまの画面とは、数ドルずれることがあります。<br>
+    ・価格はBinanceのBTCUSDTの最新値です。みらいまの画面は約10秒遅れているので、画面より先の動きを見て判定しています。数ドルずれることがあります。<br>
     ・差が$10未満のときは自信が低いです。<br>
     ・当たる保証はありません。1回は約1,000コインまで。
   </section>
 </main>
 <script>
 /*MODEL_START*/
-var CFG={gamma:0.6,alpha:0.55,lag:10,fee:0.92,
- sigma:{"0_0":3.5905,"0_1":1.8084,"1_0":3.2403,"1_1":2.133,"2_0":3.0603,"2_1":2.0989,"3_0":3.1134,"3_1":1.5708,"4_0":3.0864,"4_1":1.7962,"5_0":2.4836,"5_1":1.5765,"6_0":2.8649,"6_1":2.8446,"7_0":3.5067,"7_1":2.1077,"8_0":4.3476,"8_1":2.458,"9_0":3.223,"9_1":2.654}};
+var CFG={gamma:0.6,alpha:0.55,lag:0,fee:0.92,
+ sigma:{"0_0":3.7027,"0_1":1.8424,"1_0":3.0385,"1_1":2.2328,"2_0":3.3895,"2_1":2.1331,"3_0":3.2697,"3_1":1.632,"4_0":3.0986,"4_1":1.8778,"5_0":2.6352,"5_1":1.5984,"6_0":3.0563,"6_1":2.9128,"7_0":3.3632,"7_1":2.1565,"8_0":4.1508,"8_1":2.4763,"9_0":3.1819,"9_1":2.7327}};
 function erf(x){var s=x<0?-1:1;x=Math.abs(x);var t=1/(1+0.3275911*x);
  var y=1-(((((1.061405429*t-1.453152027)*t)+1.421413741)*t-0.284496736)*t+0.254829592)*t*Math.exp(-x*x);return s*y;}
 function Phi(z){return 0.5*(1+erf(z/Math.SQRT2));}
 function bandOf(h){return h>=6&&h<8?0:h>=8&&h<9?1:h>=9&&h<11?2:h>=11&&h<13?3:h>=13&&h<15?4:h>=15&&h<17?5:h>=17&&h<20?6:h>=20&&h<22.5?7:(h>=22.5||h<1)?8:9;}
 function probUp(v,s,band,wk){
- var sig=CFG.sigma[band+"_"+wk],r=310-s; if(r<5)r=5;
+ var sig=CFG.sigma[band+"_"+wk],r=300-s+CFG.lag; if(r<5)r=5;
  var u=v/(sig*Math.pow(r,CFG.alpha));
  var z=(u<0?-1:1)*Math.pow(Math.abs(u),CFG.gamma);
  var p=Phi(z); return Math.min(1-1e-9,Math.max(1e-9,p));}
+var VF={mu:0.8775,a:1.6707,b:-0.6005};
+function probUp2(v,s,band,wk,lv){
+ var sig=CFG.sigma[band+"_"+wk],r=300-s+CFG.lag; if(r<5)r=5;
+ var u=v/(sig*Math.pow(r,CFG.alpha));
+ var z=(u<0?-1:1)*Math.pow(Math.abs(u),CFG.gamma);
+ var x=VF.a*z+VF.b*z*(lv-VF.mu);
+ var p=1/(1+Math.exp(-x)); return Math.min(1-1e-9,Math.max(1e-9,p));}
 function margin(absd){return absd<10?1.10:1.05;}
 function kelly(P,pct,bal){
  var m=CFG.fee/pct; var f=(P*m-1)/(m-1); if(!(f>0))return 0;
@@ -135,7 +142,7 @@ function kelly(P,pct,bal){
  var $=function(i){return document.getElementById(i)};
  var API="https://api.binance.com";
  var cfg={mode:"auto",th:0.70,rem:260}; try{var sv=JSON.parse(localStorage.getItem("bet_cfg")||"null"); if(sv&&(sv.mode==="auto"||sv.mode==="fixed")&&isFinite(sv.th)){cfg=sv; if(!isFinite(cfg.rem))cfg.rem=260;}}catch(e){}
- var lock={rs:0}, skew=0, rows=[], roundStart=0, base=null, host=API, failing=0;
+ var prior={rs:0,lv:null,busy:false}, lock={rs:0}, skew=0, rows=[], roundStart=0, base=null, host=API, failing=0;
  function pad(n){return (n<10?"0":"")+n}
  function num(id){var v=parseFloat($(id).value);return isFinite(v)?v:null}
  function now(){return Date.now()+skew}
@@ -148,12 +155,23 @@ function kelly(P,pct,bal){
   try{var t=await jget("/api/v3/time");skew=t.serverTime-Date.now();}
   catch(e){}
  }
+ async function pullPrior(rs){
+  if(prior.busy||prior.rs===rs)return; prior.busy=true;
+  try{
+   var k=await jget("/api/v3/klines?symbol=BTCUSDT&interval=1s&startTime="+(rs-900000)+"&endTime="+(rs-1)+"&limit=900");
+   if(Array.isArray(k)&&k.length>300){
+    var ss=0,n=0; for(var i=1;i<k.length;i++){var d=parseFloat(k[i][4])-parseFloat(k[i-1][4]); ss+=d*d; n++;}
+    prior={rs:rs,lv:Math.log(Math.sqrt(ss/n)+1e-6),busy:false}; return;
+   }
+  }catch(e){}
+  prior.busy=false;
+ }
  async function pull(){
   var rs=Math.floor(now()/300000)*300000;
   try{
    var k=await jget("/api/v3/klines?symbol=BTCUSDT&interval=1s&startTime="+rs+"&limit=300");
    if(!Array.isArray(k))throw new Error("bad");
-   roundStart=rs; rows=k; failing=0; $("err").hidden=true;
+   roundStart=rs; rows=k; failing=0; $("err").hidden=true; pullPrior(rs);
   }catch(e){
    failing++;
    if(failing>=3){$("err").hidden=false;$("err").textContent="Binanceに接続できません。通信を確認してください。"}
@@ -171,14 +189,14 @@ function kelly(P,pct,bal){
   vb.className="verdict"; note.hidden=true;
   if(roundStart!==rs||!rows.length){big.textContent="読み込み中…";sub.textContent="";return;}
   var base=parseFloat(rows[0][1]); $("sBase").textContent=base.toFixed(2);
-  var idx=s-CFG.lag-1;
+  var idx=s-CFG.lag-1; if(idx>=rows.length&&idx-(rows.length-1)<=3) idx=rows.length-1;
   var LOCK1=Math.min(290,Math.max(20,300-cfg.rem)), AMIN=25, AMAX=120;
   if(lock.rs!==rs) lock={rs:rs,stage:0,cnt:0,lastS:-1};
   if(s>290){big.textContent="次の回へ";sub.textContent="残り10秒以内は使えません。";return;}
   if(idx<0||idx>=rows.length){big.textContent="読み込み中…";sub.textContent="";return;}
   var px=parseFloat(rows[idx][4]), vNow=px-base;
   $("sNow").textContent=px.toFixed(2);
-  var Pn=probUp(vNow,s,band,wk), PLn=Math.max(Pn,1-Pn);
+  var Pn=(prior.rs===rs&&prior.lv!==null)?probUp2(vNow,s,band,wk,prior.lv):probUp(vNow,s,band,wk), PLn=Math.max(Pn,1-Pn);
   if(cfg.mode==="fixed"){
    if(s<LOCK1){
     var rr=300-LOCK1; big.textContent="待つ"; sub.textContent="残り"+Math.floor(rr/60)+"分"+(rr%60)+"秒まで、あと"+(LOCK1-s)+"秒。その時間に決めます。";
@@ -247,6 +265,6 @@ function kelly(P,pct,bal){
  $("tmin").addEventListener("change",function(){paint()}); $("tsec").addEventListener("change",function(){paint()});
  paint();
  sync().then(pull).then(render);
- setInterval(pull,1500); setInterval(render,500); setInterval(sync,60000);
+ setInterval(pull,1000); setInterval(render,500); setInterval(sync,60000);
 })();
 </script></body></html>
